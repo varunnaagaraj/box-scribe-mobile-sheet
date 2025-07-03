@@ -5,19 +5,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Camera, ScanQrCode, Package, Plus, Edit, Trash2 } from "lucide-react";
+import {
+  Camera,
+  ScanQrCode,
+  Package,
+  Plus,
+  Edit,
+  Trash2,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 import QRScanner from "@/components/QRScanner";
 import BoxList from "@/components/BoxList";
+import { apiKey, projectEndpoint } from "@/vite-env";
+
+// Supabase configuration
+const supabaseUrl = projectEndpoint;
+const supabaseKey = apiKey;
 
 export interface BoxItem {
   id: string;
-  qrCode: string;
+  qr_code: string;
   title: string;
   description: string;
   contents: string[];
   location: string;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
 }
 
 const Index = () => {
@@ -25,6 +40,8 @@ const Index = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingBox, setEditingBox] = useState<BoxItem | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncPending, setSyncPending] = useState(false);
 
   const [formData, setFormData] = useState({
     qrCode: "",
@@ -34,141 +51,190 @@ const Index = () => {
     location: "",
   });
 
-  const [sheetsEndpoint, setSheetsEndpoint] = useState<string>(
-    localStorage.getItem("box-tracker-sheets-endpoint") || ""
-  );
+  const [supabaseConfig, setSupabaseConfig] = useState({
+    url: localStorage.getItem("box-tracker-supabase-url") || supabaseUrl,
+    key: localStorage.getItem("box-tracker-supabase-key") || supabaseKey,
+  });
 
-  const [showSheetsInput, setShowSheetsInput] = useState<boolean>(
-    !sheetsEndpoint
+  const [showSupabaseInput, setShowSupabaseInput] = useState(
+    !supabaseConfig.url || !supabaseConfig.key
   );
 
   const { toast } = useToast();
 
+  // Initialize Supabase client
+  const supabase =
+    supabaseConfig.url && supabaseConfig.key
+      ? createClient(supabaseConfig.url, supabaseConfig.key)
+      : null;
+
+  // Network status monitoring
   useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (syncPending) {
+        syncWithSupabase();
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [syncPending]);
+
+  useEffect(() => {
+    loadLocalData();
+    if (supabase && isOnline) {
+      syncWithSupabase();
+    }
+  }, [supabase, isOnline]);
+
+  useEffect(() => {
+    if (supabaseConfig.url && supabaseConfig.key) {
+      localStorage.setItem("box-tracker-supabase-url", supabaseConfig.url);
+      localStorage.setItem("box-tracker-supabase-key", supabaseConfig.key);
+    }
+  }, [supabaseConfig]);
+
+  const loadLocalData = () => {
     const savedBoxes = localStorage.getItem("box-tracker-data");
     if (savedBoxes) {
-      setBoxes(JSON.parse(savedBoxes));
+      const parsedBoxes = JSON.parse(savedBoxes);
+      // Convert database format to app format
+      const formattedBoxes = parsedBoxes.map((box: BoxItem) => ({
+        ...box,
+        qr_code: box.qr_code || box.qr_code,
+        created_at: box.created_at || box.created_at,
+        updated_at: box.updated_at || box.updated_at,
+      }));
+      setBoxes(formattedBoxes);
     }
-    if (sheetsEndpoint) {
-      fetchBoxesFromSheets();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
-  useEffect(() => {
-    localStorage.setItem("box-tracker-sheets-endpoint", sheetsEndpoint);
-  }, [sheetsEndpoint]);
+  const saveToLocalStorage = (updatedBoxes: BoxItem[]) => {
+    localStorage.setItem("box-tracker-data", JSON.stringify(updatedBoxes));
+  };
 
-  const fetchBoxesFromSheets = async () => {
-    if (!sheetsEndpoint) return;
+  const syncWithSupabase = async () => {
+    if (!supabase || !isOnline) return;
+
     try {
-      const res = await fetch(sheetsEndpoint + "?action=get");
-      if (!res.ok) throw new Error("Failed to fetch from Google Sheets");
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setBoxes(data);
-        localStorage.setItem("box-tracker-data", JSON.stringify(data));
+      const { data, error } = await supabase
+        .from("boxes")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      if (data) {
+        // Convert database format to app format
+        const formattedBoxes: BoxItem[] = data.map((box: BoxItem) => ({
+          id: box.id,
+          qr_code: box.qr_code,
+          title: box.title,
+          description: box.description || "",
+          contents: box.contents || [],
+          location: box.location || "",
+          created_at: box.created_at,
+          updated_at: box.updated_at,
+        }));
+
+        setBoxes(formattedBoxes);
+        saveToLocalStorage(formattedBoxes);
+        setSyncPending(false);
+
+        toast({
+          title: "Synced",
+          description: "Data synchronized with Supabase",
+        });
       }
-    } catch (err) {
-      console.error("Error fetching from sheets:", err);
+    } catch (error) {
+      console.error("Error syncing with Supabase:", error);
+      setSyncPending(true);
       toast({
-        title: "Error",
-        description: "Could not fetch from Google Sheets",
+        title: "Sync Error",
+        description: "Could not sync with Supabase. Will retry when online.",
         variant: "destructive",
       });
     }
   };
 
-  const saveToSheets = async (action: "add" | "update", box: BoxItem) => {
-    if (!sheetsEndpoint) return;
+  const saveToSupabase = async (action: "add" | "update", box: BoxItem) => {
+    if (!supabase) return;
+
     try {
-      // Convert contents array to comma-separated string for Google Sheets
-      const boxForSheets = {
-        ...box,
-        contents: Array.isArray(box.contents)
-          ? box.contents.join(", ")
-          : box.contents,
+      // Convert app format to database format
+      const dbBox = {
+        id: box.id,
+        qr_code: box.qr_code,
+        title: box.title,
+        description: box.description,
+        contents: box.contents,
+        location: box.location,
+        updated_at: new Date().toISOString(),
       };
 
-      const response = await fetch(sheetsEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          box: boxForSheets,
-        }),
-      });
+      if (action === "add") {
+        const { error } = await supabase
+          .from("boxes")
+          .insert([{ ...dbBox, created_at: new Date().toISOString() }]);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("boxes")
+          .update(dbBox)
+          .eq("id", box.id);
 
-      const result = await response.json();
-      console.log("Sheets response:", result);
-
-      if (result.error) {
-        throw new Error(result.error);
+        if (error) throw error;
       }
 
       toast({
         title: "Success",
         description: `Box ${
           action === "add" ? "added to" : "updated in"
-        } Google Sheets`,
+        } Supabase`,
       });
-    } catch (err) {
-      console.error("Error saving to sheets:", err);
+    } catch (error) {
+      console.error("Error saving to Supabase:", error);
+      setSyncPending(true);
       toast({
-        title: "Error",
-        description: `Could not ${action} box in Google Sheets: ${
-          err instanceof Error ? err.message : "Unknown error"
-        }`,
+        title: "Save Error",
+        description: `Could not ${action} box in Supabase. Changes saved locally.`,
         variant: "destructive",
       });
     }
   };
 
-  const deleteFromSheets = async (boxId: string) => {
-    if (!sheetsEndpoint) return;
+  const deleteFromSupabase = async (boxId: string) => {
+    if (!supabase) return;
+
     try {
-      const response = await fetch(sheetsEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "delete",
-          boxId: boxId,
-        }),
-      });
+      const { error } = await supabase.from("boxes").delete().eq("id", boxId);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log("Delete response:", result);
-
-      if (result.error) {
-        throw new Error(result.error);
-      }
+      if (error) throw error;
 
       toast({
         title: "Success",
-        description: "Box deleted from Google Sheets",
+        description: "Box deleted from Supabase",
       });
-    } catch (err) {
-      console.error("Error deleting from sheets:", err);
+    } catch (error) {
+      console.error("Error deleting from Supabase:", error);
+      setSyncPending(true);
       toast({
-        title: "Error",
-        description: `Could not delete from Google Sheets: ${
-          err instanceof Error ? err.message : "Unknown error"
-        }`,
+        title: "Delete Error",
+        description: "Could not delete from Supabase. Changes saved locally.",
         variant: "destructive",
       });
     }
-  };
-
-  const saveToLocalStorage = (updatedBoxes: BoxItem[]) => {
-    localStorage.setItem("box-tracker-data", JSON.stringify(updatedBoxes));
   };
 
   const handleQRScan = (result: string) => {
@@ -220,7 +286,7 @@ const Index = () => {
         description: formData.description,
         contents: contentsArray,
         location: formData.location,
-        updatedAt: now,
+        updated_at: now,
       };
 
       const updatedBoxes = boxes.map((box) =>
@@ -230,9 +296,11 @@ const Index = () => {
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
 
-      // Save to Google Sheets
-      if (sheetsEndpoint) {
-        await saveToSheets("update", updatedBox);
+      // Save to Supabase if online
+      if (isOnline && supabase) {
+        await saveToSupabase("update", updatedBox);
+      } else {
+        setSyncPending(true);
       }
 
       toast({
@@ -242,22 +310,24 @@ const Index = () => {
     } else {
       const newBox: BoxItem = {
         id: Date.now().toString(),
-        qrCode: formData.qrCode || `BOX-${Date.now()}`,
+        qr_code: formData.qrCode || `BOX-${Date.now()}`,
         title: formData.title,
         description: formData.description,
         contents: contentsArray,
         location: formData.location,
-        createdAt: now,
-        updatedAt: now,
+        created_at: now,
+        updated_at: now,
       };
 
       const updatedBoxes = [...boxes, newBox];
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
 
-      // Save to Google Sheets
-      if (sheetsEndpoint) {
-        await saveToSheets("add", newBox);
+      // Save to Supabase if online
+      if (isOnline && supabase) {
+        await saveToSupabase("add", newBox);
+      } else {
+        setSyncPending(true);
       }
 
       toast({
@@ -272,7 +342,7 @@ const Index = () => {
   const handleEdit = (box: BoxItem) => {
     setEditingBox(box);
     setFormData({
-      qrCode: box.qrCode,
+      qrCode: box.qr_code,
       title: box.title,
       description: box.description,
       contents: box.contents.join(", "),
@@ -289,9 +359,11 @@ const Index = () => {
     setBoxes(updatedBoxes);
     saveToLocalStorage(updatedBoxes);
 
-    // Delete from Google Sheets
-    if (sheetsEndpoint) {
-      await deleteFromSheets(boxId);
+    // Delete from Supabase if online
+    if (isOnline && supabase) {
+      await deleteFromSupabase(boxId);
+    } else {
+      setSyncPending(true);
     }
 
     toast({
@@ -303,59 +375,68 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50">
       <div className="container mx-auto p-4 max-w-md">
-        {/* Google Sheets Endpoint Input */}
-        {showSheetsInput ? (
+        {/* Supabase Configuration */}
+        {showSupabaseInput ? (
           <div className="mb-4 bg-white rounded-xl shadow p-3 flex flex-col gap-2">
-            <label
-              className="text-sm font-medium text-gray-700"
-              htmlFor="sheets-endpoint"
-            >
-              Google Sheets API Endpoint
+            <label className="text-sm font-medium text-gray-700">
+              Supabase Configuration
             </label>
             <input
-              id="sheets-endpoint"
               type="text"
               className="rounded-lg border px-3 py-2 text-sm"
-              placeholder="Paste your Google Apps Script Web App URL here"
-              value={sheetsEndpoint}
-              onChange={(e) => setSheetsEndpoint(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  setShowSheetsInput(false);
-                }
-              }}
-              autoFocus
+              placeholder="Supabase URL"
+              value={supabaseConfig.url}
+              onChange={(e) =>
+                setSupabaseConfig((prev) => ({ ...prev, url: e.target.value }))
+              }
             />
+            <input
+              type="text"
+              className="rounded-lg border px-3 py-2 text-sm"
+              placeholder="Supabase Anon Key"
+              value={supabaseConfig.key}
+              onChange={(e) =>
+                setSupabaseConfig((prev) => ({ ...prev, key: e.target.value }))
+              }
+            />
+            <Button
+              onClick={() => setShowSupabaseInput(false)}
+              disabled={!supabaseConfig.url || !supabaseConfig.key}
+              className="text-sm"
+            >
+              Save Configuration
+            </Button>
             <span className="text-xs text-gray-400">
-              This is required for cloud sync.{" "}
-              <a
-                href="https://developers.google.com/apps-script/guides/web"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline"
-              >
-                How to create?
-              </a>
+              Get these from your Supabase project settings
             </span>
           </div>
         ) : (
           <div className="mb-4 bg-white rounded-xl shadow p-3 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-xs text-gray-500">
-                Google Sheets Sync Enabled
-              </span>
-              <span className="text-xs text-blue-700 break-all">
-                {sheetsEndpoint}
-              </span>
+            <div className="flex items-center gap-2">
+              {isOnline ? (
+                <Wifi className="w-4 h-4 text-green-600" />
+              ) : (
+                <WifiOff className="w-4 h-4 text-red-600" />
+              )}
+              <div className="flex flex-col">
+                <span className="text-xs text-gray-500">
+                  Supabase {isOnline ? "Connected" : "Offline"}
+                  {syncPending && " (Sync Pending)"}
+                </span>
+                <span className="text-xs text-blue-700">
+                  {supabaseConfig.url.replace("https://", "").split(".")[0]}
+                </span>
+              </div>
             </div>
             <button
               className="ml-2 text-xs text-blue-600 underline hover:text-blue-800"
-              onClick={() => setShowSheetsInput(true)}
+              onClick={() => setShowSupabaseInput(true)}
             >
               Change
             </button>
           </div>
         )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-6 bg-white rounded-2xl shadow-lg p-4">
           <div className="flex items-center gap-3">
@@ -369,6 +450,17 @@ const Index = () => {
               </p>
             </div>
           </div>
+          {supabase && (
+            <Button
+              onClick={syncWithSupabase}
+              variant="outline"
+              size="sm"
+              disabled={!isOnline}
+              className="rounded-xl"
+            >
+              Sync
+            </Button>
+          )}
         </div>
 
         {/* Quick Actions */}
