@@ -7,10 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Camera, ScanQrCode, Package, Plus, Edit, Trash2, Settings } from 'lucide-react';
+import { Camera, ScanQrCode, Package, Plus, Edit, Trash2 } from 'lucide-react';
 import QRScanner from '@/components/QRScanner';
 import BoxList from '@/components/BoxList';
-import SettingsModal from '@/components/SettingsModal';
 
 export interface BoxItem {
   id: string;
@@ -28,8 +27,6 @@ const Index = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingBox, setEditingBox] = useState<BoxItem | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState('');
 
   const [formData, setFormData] = useState({
     qrCode: '',
@@ -42,11 +39,6 @@ const Index = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    const savedWebhook = localStorage.getItem('zapier-webhook-url');
-    if (savedWebhook) {
-      setWebhookUrl(savedWebhook);
-    }
-
     const savedBoxes = localStorage.getItem('box-tracker-data');
     if (savedBoxes) {
       setBoxes(JSON.parse(savedBoxes));
@@ -55,37 +47,6 @@ const Index = () => {
 
   const saveToLocalStorage = (updatedBoxes: BoxItem[]) => {
     localStorage.setItem('box-tracker-data', JSON.stringify(updatedBoxes));
-  };
-
-  const syncToGoogleSheets = async (action: string, boxData: BoxItem) => {
-    if (!webhookUrl) {
-      console.log('No webhook URL configured');
-      return;
-    }
-
-    try {
-      await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        mode: 'no-cors',
-        body: JSON.stringify({
-          action,
-          qr_code: boxData.qrCode,
-          title: boxData.title,
-          description: boxData.description,
-          contents: boxData.contents.join(', '),
-          location: boxData.location,
-          created_at: boxData.createdAt,
-          updated_at: boxData.updatedAt,
-          timestamp: new Date().toISOString()
-        }),
-      });
-      console.log(`Synced ${action} to Google Sheets`);
-    } catch (error) {
-      console.error('Error syncing to Google Sheets:', error);
-    }
   };
 
   const handleQRScan = (result: string) => {
@@ -146,7 +107,6 @@ const Index = () => {
       
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
-      await syncToGoogleSheets('update', updatedBox);
       
       toast({
         title: "Box Updated!",
@@ -167,7 +127,6 @@ const Index = () => {
       const updatedBoxes = [...boxes, newBox];
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
-      await syncToGoogleSheets('create', newBox);
       
       toast({
         title: "Box Added!",
@@ -197,21 +156,10 @@ const Index = () => {
     const updatedBoxes = boxes.filter(box => box.id !== boxId);
     setBoxes(updatedBoxes);
     saveToLocalStorage(updatedBoxes);
-    await syncToGoogleSheets('delete', boxToDelete);
     
     toast({
       title: "Box Deleted",
       description: `${boxToDelete.title} has been removed`,
-    });
-  };
-
-  const handleSaveSettings = (url: string) => {
-    setWebhookUrl(url);
-    localStorage.setItem('zapier-webhook-url', url);
-    setShowSettings(false);
-    toast({
-      title: "Settings Saved",
-      description: "Zapier webhook URL has been updated",
     });
   };
 
@@ -229,14 +177,6 @@ const Index = () => {
               <p className="text-sm text-gray-500">{boxes.length} boxes tracked</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowSettings(true)}
-            className="p-2"
-          >
-            <Settings className="w-5 h-5" />
-          </Button>
         </div>
 
         {/* Quick Actions */}
@@ -360,15 +300,6 @@ const Index = () => {
           <QRScanner
             onScan={handleQRScan}
             onClose={() => setShowScanner(false)}
-          />
-        )}
-
-        {/* Settings Modal */}
-        {showSettings && (
-          <SettingsModal
-            webhookUrl={webhookUrl}
-            onSave={handleSaveSettings}
-            onClose={() => setShowSettings(false)}
           />
         )}
       </div>
