@@ -70,6 +70,7 @@ const Index = () => {
         localStorage.setItem("box-tracker-data", JSON.stringify(data));
       }
     } catch (err) {
+      console.error("Error fetching from sheets:", err);
       toast({
         title: "Error",
         description: "Could not fetch from Google Sheets",
@@ -81,15 +82,47 @@ const Index = () => {
   const saveToSheets = async (action: "add" | "update", box: BoxItem) => {
     if (!sheetsEndpoint) return;
     try {
-      await fetch(sheetsEndpoint, {
+      // Convert contents array to comma-separated string for Google Sheets
+      const boxForSheets = {
+        ...box,
+        contents: Array.isArray(box.contents)
+          ? box.contents.join(", ")
+          : box.contents,
+      };
+
+      const response = await fetch(sheetsEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, box }),
+        body: JSON.stringify({
+          action,
+          box: boxForSheets,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log("Sheets response:", result);
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      toast({
+        title: "Success",
+        description: `Box ${
+          action === "add" ? "added to" : "updated in"
+        } Google Sheets`,
       });
     } catch (err) {
+      console.error("Error saving to sheets:", err);
       toast({
         title: "Error",
-        description: "Could not sync with Google Sheets",
+        description: `Could not ${action} box in Google Sheets: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
         variant: "destructive",
       });
     }
@@ -98,15 +131,37 @@ const Index = () => {
   const deleteFromSheets = async (boxId: string) => {
     if (!sheetsEndpoint) return;
     try {
-      await fetch(sheetsEndpoint, {
+      const response = await fetch(sheetsEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", boxId }),
+        body: JSON.stringify({
+          action: "delete",
+          boxId: boxId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log("Delete response:", result);
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      toast({
+        title: "Success",
+        description: "Box deleted from Google Sheets",
       });
     } catch (err) {
+      console.error("Error deleting from sheets:", err);
       toast({
         title: "Error",
-        description: "Could not delete from Google Sheets",
+        description: `Could not delete from Google Sheets: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
         variant: "destructive",
       });
     }
@@ -174,6 +229,8 @@ const Index = () => {
 
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
+
+      // Save to Google Sheets
       if (sheetsEndpoint) {
         await saveToSheets("update", updatedBox);
       }
@@ -197,6 +254,8 @@ const Index = () => {
       const updatedBoxes = [...boxes, newBox];
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
+
+      // Save to Google Sheets
       if (sheetsEndpoint) {
         await saveToSheets("add", newBox);
       }
@@ -229,9 +288,12 @@ const Index = () => {
     const updatedBoxes = boxes.filter((box) => box.id !== boxId);
     setBoxes(updatedBoxes);
     saveToLocalStorage(updatedBoxes);
+
+    // Delete from Google Sheets
     if (sheetsEndpoint) {
       await deleteFromSheets(boxId);
     }
+
     toast({
       title: "Box Deleted",
       description: `${boxToDelete.title} has been removed`,
