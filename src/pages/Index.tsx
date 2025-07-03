@@ -91,10 +91,10 @@ const Index = () => {
 
   useEffect(() => {
     loadLocalData();
-    if (supabase && isOnline) {
+    if (supabase && isOnline && syncPending) {
       syncWithSupabase();
     }
-  }, [supabase, isOnline]);
+  }, [supabase, isOnline, syncPending]);
 
   useEffect(() => {
     if (supabaseConfig.url && supabaseConfig.key) {
