@@ -18,11 +18,10 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import QRScanner from "@/components/QRScanner";
 import BoxList from "@/components/BoxList";
-import { apiKey, projectEndpoint } from "@/vite-env";
 
 // Supabase configuration
-const supabaseUrl = projectEndpoint;
-const supabaseKey = apiKey;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 export interface BoxItem {
   id: string;
