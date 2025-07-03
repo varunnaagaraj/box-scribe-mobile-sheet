@@ -78,18 +78,18 @@ const Index = () => {
     }
   };
 
-  const saveToSheets = async (updatedBoxes: BoxItem[]) => {
+  const saveToSheets = async (action: "add" | "update", box: BoxItem) => {
     if (!sheetsEndpoint) return;
     try {
       await fetch(sheetsEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", boxes: updatedBoxes }),
+        body: JSON.stringify({ action, box }),
       });
     } catch (err) {
       toast({
         title: "Error",
-        description: "Could not save to Google Sheets",
+        description: "Could not sync with Google Sheets",
         variant: "destructive",
       });
     }
@@ -114,9 +114,6 @@ const Index = () => {
 
   const saveToLocalStorage = (updatedBoxes: BoxItem[]) => {
     localStorage.setItem("box-tracker-data", JSON.stringify(updatedBoxes));
-    if (sheetsEndpoint) {
-      saveToSheets(updatedBoxes);
-    }
   };
 
   const handleQRScan = (result: string) => {
@@ -177,6 +174,9 @@ const Index = () => {
 
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
+      if (sheetsEndpoint) {
+        await saveToSheets("update", updatedBox);
+      }
 
       toast({
         title: "Box Updated!",
@@ -197,6 +197,9 @@ const Index = () => {
       const updatedBoxes = [...boxes, newBox];
       setBoxes(updatedBoxes);
       saveToLocalStorage(updatedBoxes);
+      if (sheetsEndpoint) {
+        await saveToSheets("add", newBox);
+      }
 
       toast({
         title: "Box Added!",
